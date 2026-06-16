@@ -1,19 +1,33 @@
 #!/usr/bin/env node
 
 import { createInterface } from 'readline'
-import { randomUUID } from 'crypto'
 import { loadConfig, saveConfig } from '../src/lib/config.js'
-import { registerDevice, checkDevice } from '../src/lib/device.js'
+import { discoverAibox } from '../src/lib/discover.js'
+import { requestPairing, verifyPairing, checkDevice } from '../src/lib/device.js'
 import { writeClaudeCodeHooks } from '../src/adapters/claude-code.js'
 
 const rl = createInterface({ input: process.stdin, output: process.stdout })
 const ask = (prompt) => new Promise(r => rl.question(prompt, r))
 
 const TOOLS = [
-  { label: 'Claude Code',   fn: writeClaudeCodeHooks },
+  { label: 'Claude Code', fn: writeClaudeCodeHooks },
   { label: 'OpenAI Codex', fn: null },
   { label: 'OpenCode',     fn: null },
 ]
+
+async function resolveIp(savedIp) {
+  process.stdout.write('Looking for device on network (aibox.local)... ')
+  const found = await discoverAibox()
+  if (found) {
+    console.log(`found at ${found}`)
+    return found
+  }
+  console.log('not found via mDNS')
+
+  const defaultIp = savedIp || '192.168.1.100'
+  const input = (await ask(`Enter device IP [${defaultIp}]: `)).trim()
+  return input || defaultIp
+}
 
 async function runSetup() {
   console.log('\n@ai-appliances/hooks — setup\n')
@@ -33,23 +47,48 @@ async function runSetup() {
     return
   }
 
-  // Device IP
-  const defaultIp = config.ip || '192.168.1.100'
-  const ipInput = (await ask(`\nDevice IP [${defaultIp}]: `)).trim()
-  const ip = ipInput || defaultIp
+  // Discover or ask for IP
+  const ip = await resolveIp(config.ip)
 
-  rl.close()
+  // Pairing flow
+  console.log('\nStarting pairing...')
+  process.stdout.write('Sending pair request to device... ')
+  const requested = await requestPairing(ip)
 
-  // Token: reuse existing or generate new
-  const token = config.token || randomUUID()
+  if (!requested) {
+    console.log('failed')
+    console.log('\nCould not reach the device.')
+    console.log('Make sure device is powered on and connected to the same network.\n')
+    rl.close()
+    return
+  }
 
-  // Register token with device
-  process.stdout.write('\nRegistering with device... ')
-  const ok = await registerDevice(ip, token)
-  console.log(ok ? '✓' : '⚠  device unreachable — token saved locally, re-run setup when device is online')
+  console.log('ok')
+  console.log('\nA 4-digit PIN is now shown on the device display.')
+  console.log('(Press MIC button on device to cancel)\n')
+
+  let token = null
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const raw  = (await ask(`Enter PIN: `)).trim()
+    const pin  = raw.padStart(4, '0').slice(-4)
+
+    process.stdout.write('Verifying... ')
+    token = await verifyPairing(ip, pin)
+
+    if (token) {
+      console.log('✓ paired!')
+      break
+    }
+    console.log('✗ wrong PIN')
+    if (attempt === 3) {
+      console.log('\nToo many failed attempts. Run setup again to get a new PIN.\n')
+      rl.close()
+      return
+    }
+  }
 
   // Write hooks
-  process.stdout.write(`Writing ${TOOLS[toolIdx].label} hooks... `)
+  process.stdout.write(`\nWriting ${TOOLS[toolIdx].label} hooks... `)
   await TOOLS[toolIdx].fn(ip, token)
   console.log('✓')
 
@@ -57,19 +96,29 @@ async function runSetup() {
   await saveConfig({ ip, token })
 
   console.log('\nDone! Restart your AI coding tool to apply hooks.')
-  console.log(`Config: ~/.ai-appliances/config.json\n`)
+  console.log(`Config saved to ~/.ai-appliances/config.json\n`)
+  rl.close()
 }
 
 async function runStatus() {
   const config = await loadConfig()
-  if (!config.ip || !config.token) {
+  if (!config.ip) {
     console.log('\nNot configured — run: npx @ai-appliances/hooks setup\n')
     return
   }
-  process.stdout.write(`\nDevice ${config.ip} ... `)
-  const online = await checkDevice(config.ip, config.token)
-  console.log(online ? '✓ online' : '✗ offline')
-  console.log(`Token: ${config.token}\n`)
+
+  process.stdout.write(`\nChecking ${config.ip} ... `)
+  const status = await checkDevice(config.ip, config.token)
+
+  if (!status) {
+    console.log('offline or unreachable')
+  } else {
+    console.log('online')
+    console.log(`  Type:   ${status.type ?? 'unknown'}`)
+    console.log(`  Paired: ${status.paired ? 'yes' : 'no'}`)
+    console.log(`  Token:  ${config.token ?? '(none)'}`)
+  }
+  console.log()
 }
 
 const cmd = process.argv[2] || 'setup'
