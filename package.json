@@ -1,0 +1,23 @@
+{
+  "name": "@ai-appliances/hooks",
+  "version": "0.1.0",
+  "description": "Connect AI coding assistants to AI Appliances smart devices",
+  "type": "module",
+  "bin": {
+    "ai-appliances-hooks": "./bin/setup.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "claude-code",
+    "hooks",
+    "aibox",
+    "smart-appliance",
+    "ai-appliances"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}
