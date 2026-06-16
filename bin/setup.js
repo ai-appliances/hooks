@@ -3,7 +3,7 @@
 import { createInterface } from 'readline'
 import { loadConfig, saveConfig } from '../src/lib/config.js'
 import { discoverAibox } from '../src/lib/discover.js'
-import { requestPairing, verifyPairing, checkDevice } from '../src/lib/device.js'
+import { requestPairing, verifyPairing, checkDevice, resetPairing } from '../src/lib/device.js'
 import { writeClaudeCodeHooks } from '../src/adapters/claude-code.js'
 
 const rl = createInterface({ input: process.stdin, output: process.stdout })
@@ -121,11 +121,36 @@ async function runStatus() {
   console.log()
 }
 
+async function runReset() {
+  const config = await loadConfig()
+  if (!config.ip) {
+    console.log('\nNot configured — run: npx @ai-appliances/hooks setup\n')
+    return
+  }
+
+  console.log(`\nResetting pairing on ${config.ip} ...`)
+  const ok = await resetPairing(config.ip, config.token)
+
+  if (!ok) {
+    console.log('Failed — device may be offline or token invalid.')
+    console.log('To force reset: delete ~/.ai-appliances/config.json and re-run setup.\n')
+    rl.close()
+    return
+  }
+
+  // Clear local config
+  await saveConfig({})
+  console.log('Done — device unpaired and local config cleared.')
+  console.log('Run setup again to re-pair.\n')
+  rl.close()
+}
+
 const cmd = process.argv[2] || 'setup'
 if      (cmd === 'setup')  runSetup().catch(e => { console.error(e.message); process.exit(1) })
 else if (cmd === 'status') runStatus().catch(e => { console.error(e.message); process.exit(1) })
+else if (cmd === 'reset')  runReset().catch(e => { console.error(e.message); process.exit(1) })
 else {
   console.error(`Unknown command: ${cmd}`)
-  console.error('Usage: npx @ai-appliances/hooks [setup|status]')
+  console.error('Usage: npx @ai-appliances/hooks [setup|status|reset]')
   process.exit(1)
 }

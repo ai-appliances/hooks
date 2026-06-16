@@ -28,6 +28,21 @@ export async function verifyPairing(ip, pin) {
   }
 }
 
+// Reset pairing — clears stored token on device. Requires valid token.
+// Returns true on success, false on failure.
+export async function resetPairing(ip, token) {
+  try {
+    const res = await fetch(`http://${ip}/pair/reset`, {
+      method: 'POST',
+      headers: token ? { 'X-AI-Appliances-Token': token } : {},
+      signal: AbortSignal.timeout(5000),
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
 // Check device connectivity. Returns status object or null.
 export async function checkDevice(ip, token) {
   try {
